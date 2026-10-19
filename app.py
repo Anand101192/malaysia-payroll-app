@@ -11,7 +11,7 @@ st.markdown("""
 The engine auto-detects rows, extracts employee details, and calculates EPF, SOCSO, EIS, and PCB/Net Pay.
 """)
 
-# --- MALAYSIAN STATUTORY RULES (EPF, SOCSO, EIS, PCB) ---
+# --- MALAYSIAN STATUTORY RULES ---
 def compute_epf(salary):
     ee_epf = round(salary * 0.11, 2)
     er_epf = round(salary * 0.13 if salary <= 5000 else salary * 0.12, 2)
@@ -39,38 +39,46 @@ if uploaded_file is not None:
         xls = pd.ExcelFile(uploaded_file)
         target_sheet = 'ATTENDANCE (2)' if 'ATTENDANCE (2)' in xls.sheet_names else xls.sheet_names[0]
         
-        df = pd.read_excel(uploaded_file, sheet_name=target_sheet, header=7)
+        # Read Excel starting from header row index 6
+        df = pd.read_excel(uploaded_file, sheet_name=target_sheet, header=6)
         
-        # Auto-detect name column dynamically
-        name_col = None
-        for col in df.columns:
-            col_str = str(col).strip().upper()
-            if 'NAME' in col_str or 'STAFF' in col_str:
-                name_col = col
-                break
-                
-        if name_col is None:
-            name_col = df.columns[2] if len(df.columns) > 2 else df.columns[1]
+        # Clean column names
+        df.columns = [str(c).strip() for c in df.columns]
+        
+        # Locate correct columns dynamically
+        name_col = next((c for c in df.columns if 'NAME' in c.upper() or 'STAFF / CREW NAME' in c.upper()), None)
+        pos_col = next((c for c in df.columns if 'POSITION' in c.upper()), None)
+        ic_col = next((c for c in df.columns if 'I/C' in c.upper() or 'STAFF / CREW' in c.upper() and c != name_col), None)
+        total_col = next((c for c in df.columns if c.upper() == 'TOTAL'), None)
+        
+        if not name_col:
+            name_col = df.columns[2]
+        if not pos_col:
+            pos_col = df.columns[4] if len(df.columns) > 4 else df.columns[3]
+        if not total_col:
+            total_col = df.columns[40] if len(df.columns) > 40 else df.columns[-1]
 
+        # Filter valid employee rows (where name is present and not a header sub-row)
         df_clean = df.dropna(subset=[name_col]).copy()
-        
-        st.success(f"File loaded successfully! Detected **{len(df_clean)}** staff/crew rows.")
         
         default_base = st.sidebar.number_input("Default Base Salary for Crew (RM)", value=2200.0, step=100.0)
         manager_base = st.sidebar.number_input("Default Base Salary for Manager (RM)", value=4500.0, step=100.0)
         
         records = []
         for idx, row in df_clean.iterrows():
-            name = str(row.get(name_col, 'Unknown'))
-            if 'NAME' in name.upper() or 'NO.' in name.upper():
+            name = str(row.get(name_col, '')).strip()
+            
+            # Skip header or metadata rows that leaked into data
+            if not name or name.lower() == 'nan' or 'NAME' in name.upper() or 'NO.' in name.upper() or name.isdigit():
                 continue
                 
-            ic_no = str(row.get('I/C', row.get('STAFF / CREW', '-')))
-            position = str(row.get('POSITION', 'Staff'))
+            position = str(row.get(pos_col, 'Staff')).strip()
+            ic_no = str(row.get(ic_col, '-')).strip() if ic_col else '-'
             
-            total_days = row.get('TOTAL', 26)
+            # Extract total days worked
+            raw_days = row.get(total_col, 26)
             try:
-                days_worked = float(total_days)
+                days_worked = float(raw_days)
             except:
                 days_worked = 26.0
                 
@@ -89,7 +97,7 @@ if uploaded_file is not None:
             records.append({
                 'Staff Name': name,
                 'IC / ID': ic_no,
-                'Position': position,
+                'Position': position if position.lower() != 'nan' else 'Staff',
                 'Days Worked': days_worked,
                 'Base Salary (RM)': base,
                 'Earned Basic (RM)': earned_basic,
@@ -105,6 +113,8 @@ if uploaded_file is not None:
             })
             
         payroll_df = pd.DataFrame(records)
+        
+        st.success(f"File loaded successfully! Detected **{len(payroll_df)}** staff/crew rows.")
         
         st.subheader("📊 Summary Payroll Breakdown")
         col1, col2, col3, col4 = st.columns(4)
