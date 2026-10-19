@@ -7,7 +7,7 @@ st.set_page_config(page_title="Malaysia Automated Payroll System", page_icon="�
 st.title("🇲🇾 Malaysia Web Payroll Engine")
 st.markdown("""
 **Drop & Calculate System**: Drop your monthly attendance Excel sheet. 
-The engine auto-detects sheets, dynamically locates staff tables, and calculates EPF, SOCSO, EIS, and PCB/Net Pay.
+The engine auto-detects sheets, extracts all staff rows accurately, and calculates EPF, SOCSO, EIS, and PCB/Net Pay.
 """)
 
 # --- MALAYSIAN STATUTORY RULES ---
@@ -37,42 +37,31 @@ if uploaded_file is not None:
     try:
         xls = pd.ExcelFile(uploaded_file)
         
-        # Filter sheets and prioritize 'ATTENDANCE (2)' or 'ATTENDANCE'
+        # Filter out agency or non-attendance sheets
         all_sheets = xls.sheet_names
         filtered_sheets = [s for s in all_sheets if 'AGENCY' not in s.upper() and 'SHEET1' not in s.upper()]
-        
         if not filtered_sheets:
             filtered_sheets = all_sheets
             
-        # Set default index to ATTENDANCE (2) if present
         default_index = 0
         for i, s in enumerate(filtered_sheets):
             if 'ATTENDANCE (2)' in s.upper():
                 default_index = i
                 break
-            elif 'ATTENDANCE' in s.upper():
-                default_index = i
                 
         selected_sheet = st.sidebar.selectbox("Select Attendance Sheet", filtered_sheets, index=default_index)
         
-        # Read Excel using header row index 8 (Standard structure for ATTENDANCE (2))
-        raw_df = pd.read_excel(uploaded_file, sheet_name=selected_sheet, header=None)
-        header_row = 8
-        for idx, row in raw_df.iterrows():
-            row_str = " ".join([str(v).upper() for v in row.values if pd.notna(v)])
-            if 'STAFF / CREW NAME' in row_str or ('NAME' in row_str and 'POSITION' in row_str):
-                header_row = idx
-                break
-        
-        df = pd.read_excel(uploaded_file, sheet_name=selected_sheet, header=header_row)
+        # Read Excel using header row index 8
+        df = pd.read_excel(uploaded_file, sheet_name=selected_sheet, header=8)
         df.columns = [str(c).strip() for c in df.columns]
         
-        name_col = next((c for c in df.columns if 'NAME' in c.upper()), df.columns[2] if len(df.columns) > 2 else None)
-        pos_col = next((c for c in df.columns if 'POSITION' in c.upper()), df.columns[4] if len(df.columns) > 4 else None)
-        ic_col = next((c for c in df.columns if 'I/C' in c.upper() or ('STAFF' in c.upper() and c != name_col)), df.columns[3] if len(df.columns) > 3 else None)
-        total_col = next((c for c in df.columns if c.upper() == 'TOTAL'), df.columns[40] if len(df.columns) > 40 else df.columns[-1])
+        name_col = next((c for c in df.columns if 'NAME' in c.upper()), 'STAFF / CREW NAME')
+        pos_col = next((c for c in df.columns if 'POSITION' in c.upper()), 'POSITION')
+        ic_col = next((c for c in df.columns if 'I/C' in c.upper() or ('STAFF' in c.upper() and c != name_col)), 'STAFF / CREW')
+        total_col = next((c for c in df.columns if c.upper() == 'TOTAL'), 'TOTAL')
         
-        df_clean = df.dropna(subset=[name_col]).copy()
+        # Drop rows where name or NO. is missing
+        df_clean = df.dropna(subset=[name_col, 'NO.']).copy()
         
         default_base = st.sidebar.number_input("Default Base Salary for Crew (RM)", value=2200.0, step=100.0)
         manager_base = st.sidebar.number_input("Default Base Salary for Manager (RM)", value=4500.0, step=100.0)
