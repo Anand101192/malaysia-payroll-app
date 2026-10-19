@@ -137,4 +137,8 @@ if uploaded_file is not None:
                 label="📥 Download Department Payroll Excel Report (.xlsx)",
                 data=processed_data,
                 file_name=f"Payroll_Summary_{selected_sheet}.xlsx",
-                mime="
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        
+    except Exception as e:
+        st.error(f"Error processing file: {e}")
