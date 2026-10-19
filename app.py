@@ -37,7 +37,6 @@ if uploaded_file is not None:
     try:
         xls = pd.ExcelFile(uploaded_file)
         
-        # Filter out agency or non-attendance sheets
         all_sheets = xls.sheet_names
         filtered_sheets = [s for s in all_sheets if 'AGENCY' not in s.upper() and 'SHEET1' not in s.upper()]
         if not filtered_sheets:
@@ -60,8 +59,8 @@ if uploaded_file is not None:
         ic_col = next((c for c in df.columns if 'I/C' in c.upper() or ('STAFF' in c.upper() and c != name_col)), 'STAFF / CREW')
         total_col = next((c for c in df.columns if c.upper() == 'TOTAL'), 'TOTAL')
         
-        # Drop rows where name or NO. is missing
-        df_clean = df.dropna(subset=[name_col, 'NO.']).copy()
+        # Only require name column to be non-null
+        df_clean = df.dropna(subset=[name_col]).copy()
         
         default_base = st.sidebar.number_input("Default Base Salary for Crew (RM)", value=2200.0, step=100.0)
         manager_base = st.sidebar.number_input("Default Base Salary for Manager (RM)", value=4500.0, step=100.0)
@@ -70,7 +69,8 @@ if uploaded_file is not None:
         for idx, row in df_clean.iterrows():
             name = str(row.get(name_col, '')).strip()
             
-            if not name or name.lower() == 'nan' or 'NAME' in name.upper() or 'NO.' in name.upper() or name.isdigit():
+            # Skip header or subheader metadata rows
+            if not name or name.lower() == 'nan' or 'NAME' in name.upper() or 'NO.' in name.upper() or len(name) < 2:
                 continue
                 
             position = str(row.get(pos_col, 'Staff')).strip()
