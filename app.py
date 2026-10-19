@@ -2,13 +2,12 @@ import streamlit as st
 import pandas as pd
 import io
 
-# Set page config
 st.set_page_config(page_title="Malaysia Automated Payroll System", page_icon="🇲🇾", layout="wide")
 
 st.title("🇲🇾 Malaysia Web Payroll Engine")
 st.markdown("""
 **Drop & Calculate System**: Drop your monthly attendance Excel sheet. 
-The engine auto-detects rows, extracts employee details, and calculates EPF, SOCSO, EIS, and PCB/Net Pay.
+The engine auto-detects sheets, extracts employee details, and calculates EPF, SOCSO, EIS, and PCB/Net Pay.
 """)
 
 # --- MALAYSIAN STATUTORY RULES ---
@@ -37,28 +36,34 @@ uploaded_file = st.file_uploader("Drop Attendance Excel File Here", type=["xlsx"
 if uploaded_file is not None:
     try:
         xls = pd.ExcelFile(uploaded_file)
-        target_sheet = 'ATTENDANCE (2)' if 'ATTENDANCE (2)' in xls.sheet_names else xls.sheet_names[0]
         
-        # Read Excel starting from header row index 6
-        df = pd.read_excel(uploaded_file, sheet_name=target_sheet, header=6)
+        # Let user choose sheet or default to first valid attendance sheet
+        sheet_options = [s for s in xls.sheet_names if 'SHEET1' not in s.upper()]
+        selected_sheet = st.sidebar.selectbox("Select Attendance Sheet", sheet_options if sheet_options else xls.sheet_names)
         
-        # Clean column names
+        # Read raw to find header row containing 'NAME' or 'STAFF'
+        raw_df = pd.read_excel(uploaded_file, sheet_name=selected_sheet, header=None)
+        header_row_idx = 7 # Default fallback
+        for idx, row in raw_df.iterrows():
+            row_str = " ".join([str(val).upper() for val in row.values])
+            if 'STAFF' in row_str or 'NAME' in row_str:
+                header_row_idx = idx
+                break
+                
+        # Re-read with correct header row
+        df = pd.read_excel(uploaded_file, sheet_name=selected_sheet, header=header_row_idx)
         df.columns = [str(c).strip() for c in df.columns]
         
-        # Locate correct columns dynamically
-        name_col = next((c for c in df.columns if 'NAME' in c.upper() or 'STAFF / CREW NAME' in c.upper()), None)
+        # Locate columns dynamically
+        name_col = next((c for c in df.columns if 'NAME' in c.upper() or 'STAFF / CREW' in c.upper()), None)
         pos_col = next((c for c in df.columns if 'POSITION' in c.upper()), None)
-        ic_col = next((c for c in df.columns if 'I/C' in c.upper() or 'STAFF / CREW' in c.upper() and c != name_col), None)
+        ic_col = next((c for c in df.columns if 'I/C' in c.upper() or 'STAFF' in c.upper() and c != name_col), None)
         total_col = next((c for c in df.columns if c.upper() == 'TOTAL'), None)
         
         if not name_col:
-            name_col = df.columns[2]
-        if not pos_col:
-            pos_col = df.columns[4] if len(df.columns) > 4 else df.columns[3]
-        if not total_col:
-            total_col = df.columns[40] if len(df.columns) > 40 else df.columns[-1]
-
-        # Filter valid employee rows (where name is present and not a header sub-row)
+            name_col = df.columns[2] if len(df.columns) > 2 else df.columns[1]
+            
+        # Clean and filter valid rows
         df_clean = df.dropna(subset=[name_col]).copy()
         
         default_base = st.sidebar.number_input("Default Base Salary for Crew (RM)", value=2200.0, step=100.0)
@@ -68,15 +73,15 @@ if uploaded_file is not None:
         for idx, row in df_clean.iterrows():
             name = str(row.get(name_col, '')).strip()
             
-            # Skip header or metadata rows that leaked into data
+            # Skip invalid header or metadata rows
             if not name or name.lower() == 'nan' or 'NAME' in name.upper() or 'NO.' in name.upper() or name.isdigit():
                 continue
                 
-            position = str(row.get(pos_col, 'Staff')).strip()
+            position = str(row.get(pos_col, 'Staff')).strip() if pos_col else 'Staff'
             ic_no = str(row.get(ic_col, '-')).strip() if ic_col else '-'
             
-            # Extract total days worked
-            raw_days = row.get(total_col, 26)
+            # Extract total days worked safely
+            raw_days = row.get(total_col, 26) if total_col else 26
             try:
                 days_worked = float(raw_days)
             except:
@@ -107,36 +112,39 @@ if uploaded_file is not None:
                 'PCB Tax (RM)': pcb,
                 'Total Deductions (RM)': total_deductions,
                 'Net Salary Payable (RM)': net_pay,
-                'EPF Employer (RM)': epf_er,
+                'EPF Employer (RM)': er_epf,
                 'SOCSO Employer (RM)': socso_er,
                 'EIS Employer (RM)': eis_er
             })
             
         payroll_df = pd.DataFrame(records)
         
-        st.success(f"File loaded successfully! Detected **{len(payroll_df)}** staff/crew rows.")
-        
-        st.subheader("📊 Summary Payroll Breakdown")
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Total Staff Count", f"{len(payroll_df)}")
-        col2.metric("Total Gross Payout", f"RM {payroll_df['Earned Basic (RM)'].sum():,.2f}")
-        col3.metric("Total Employee Deductions", f"RM {payroll_df['Total Deductions (RM)'].sum():,.2f}")
-        col4.metric("Total Net Payable", f"RM {payroll_df['Net Salary Payable (RM)'].sum():,.2f}")
-        
-        st.subheader("📋 Calculated Payroll Data")
-        st.dataframe(payroll_df, use_container_width=True)
-        
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            payroll_df.to_excel(writer, index=False, sheet_name='Payroll Summary')
-        processed_data = output.getvalue()
-        
-        st.download_button(
-            label="📥 Download Department Payroll Excel Report (.xlsx)",
-            data=processed_data,
-            file_name="MY_Payroll_Summary_September_2026.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+        if len(payroll_df) == 0:
+            st.warning("No staff rows could be extracted. Please verify the selected sheet structure.")
+        else:
+            st.success(f"File loaded successfully! Detected **{len(payroll_df)}** staff/crew rows from sheet `{selected_sheet}`.")
+            
+            st.subheader("📊 Summary Payroll Breakdown")
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Total Staff Count", f"{len(payroll_df)}")
+            col2.metric("Total Gross Payout", f"RM {payroll_df['Earned Basic (RM)'].sum():,.2f}")
+            col3.metric("Total Employee Deductions", f"RM {payroll_df['Total Deductions (RM)'].sum():,.2f}")
+            col4.metric("Total Net Payable", f"RM {payroll_df['Net Salary Payable (RM)'].sum():,.2f}")
+            
+            st.subheader("📋 Calculated Payroll Data")
+            st.dataframe(payroll_df, use_container_width=True)
+            
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                payroll_df.to_excel(writer, index=False, sheet_name='Payroll Summary')
+            processed_data = output.getvalue()
+            
+            st.download_button(
+                label="📥 Download Department Payroll Excel Report (.xlsx)",
+                data=processed_data,
+                file_name=f"Payroll_Summary_{selected_sheet}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
         
     except Exception as e:
         st.error(f"Error processing file: {e}")
