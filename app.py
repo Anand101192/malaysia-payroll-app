@@ -7,7 +7,7 @@ st.set_page_config(page_title="Malaysia Automated Payroll System", page_icon="�
 st.title("🇲🇾 Malaysia Web Payroll Engine")
 st.markdown("""
 **Drop & Calculate System**: Drop your monthly attendance Excel sheet. 
-The engine auto-detects sheets, extracts all staff rows accurately, and calculates EPF, SOCSO, EIS, and PCB/Net Pay.
+The engine auto-detects sheets, dynamically locates staff tables, and calculates EPF, SOCSO, EIS, and PCB/Net Pay.
 """)
 
 # --- MALAYSIAN STATUTORY RULES ---
@@ -37,10 +37,10 @@ if uploaded_file is not None:
     try:
         xls = pd.ExcelFile(uploaded_file)
         
-        all_sheets = xls.sheet_names
-        filtered_sheets = [s for s in all_sheets if 'AGENCY' not in s.upper() and 'SHEET1' not in s.upper()]
+        # Filter out utility/formula sheets
+        filtered_sheets = [s for s in xls.sheet_names if 'SHEET1' not in s.upper()]
         if not filtered_sheets:
-            filtered_sheets = all_sheets
+            filtered_sheets = xls.sheet_names
             
         default_index = 0
         for i, s in enumerate(filtered_sheets):
@@ -50,16 +50,36 @@ if uploaded_file is not None:
                 
         selected_sheet = st.sidebar.selectbox("Select Attendance Sheet", filtered_sheets, index=default_index)
         
-        # Read Excel using header row index 8
-        df = pd.read_excel(uploaded_file, sheet_name=selected_sheet, header=8)
+        # 1. DYNAMICALLY DETECT HEADER ROW
+        raw_df = pd.read_excel(uploaded_file, sheet_name=selected_sheet, header=None)
+        header_row = 8  # Default fallback
+        
+        for idx, row in raw_df.iterrows():
+            row_vals = [str(v).strip().upper() for v in row.values if pd.notna(v)]
+            row_str = " ".join(row_vals)
+            if ('NAME' in row_str or 'STAFF' in row_str) and ('NO.' in row_str or 'POSITION' in row_str or 'HUB' in row_str):
+                header_row = idx
+                break
+        
+        # 2. READ EXCEL WITH DETECTED HEADER ROW
+        df = pd.read_excel(uploaded_file, sheet_name=selected_sheet, header=header_row)
         df.columns = [str(c).strip() for c in df.columns]
         
-        name_col = next((c for c in df.columns if 'NAME' in c.upper()), 'STAFF / CREW NAME')
-        pos_col = next((c for c in df.columns if 'POSITION' in c.upper()), 'POSITION')
-        ic_col = next((c for c in df.columns if 'I/C' in c.upper() or ('STAFF' in c.upper() and c != name_col)), 'STAFF / CREW')
-        total_col = next((c for c in df.columns if c.upper() == 'TOTAL'), 'TOTAL')
+        # 3. DYNAMIC COLUMN MATCHING
+        name_col = None
+        for c in df.columns:
+            col_upper = c.upper()
+            if 'STAFF / CREW NAME' in col_upper or col_upper == 'NAME':
+                name_col = c
+                break
+        if not name_col:
+            name_col = next((c for c in df.columns if 'NAME' in c.upper()), df.columns[2] if len(df.columns) > 2 else df.columns[0])
+            
+        pos_col = next((c for c in df.columns if 'POSITION' in c.upper()), None)
+        ic_col = next((c for c in df.columns if 'I/C' in c.upper() or ('STAFF' in c.upper() and c != name_col)), None)
+        total_col = next((c for c in df.columns if c.upper() in ['TOTAL', 'OT']), None)
         
-        # Only require name column to be non-null
+        # Clean dataframe to drop empty rows
         df_clean = df.dropna(subset=[name_col]).copy()
         
         default_base = st.sidebar.number_input("Default Base Salary for Crew (RM)", value=2200.0, step=100.0)
@@ -69,14 +89,14 @@ if uploaded_file is not None:
         for idx, row in df_clean.iterrows():
             name = str(row.get(name_col, '')).strip()
             
-            # Skip header or subheader metadata rows
-            if not name or name.lower() == 'nan' or 'NAME' in name.upper() or 'NO.' in name.upper() or len(name) < 2:
+            # Filter out headers, empty rows, or subheadings
+            if not name or name.lower() == 'nan' or 'NAME' in name.upper() or 'STAFF' in name.upper() or len(name) < 2:
                 continue
                 
-            position = str(row.get(pos_col, 'Staff')).strip()
-            ic_no = str(row.get(ic_col, '-')).strip()
+            position = str(row.get(pos_col, 'Staff')).strip() if pos_col else 'Staff'
+            ic_no = str(row.get(ic_col, '-')).strip() if ic_col else '-'
             
-            raw_days = row.get(total_col, 26)
+            raw_days = row.get(total_col, 26) if total_col else 26
             try:
                 days_worked = float(raw_days)
             except:
@@ -98,7 +118,7 @@ if uploaded_file is not None:
                 'Staff Name': name,
                 'IC / ID': ic_no if ic_no.lower() != 'nan' else '-',
                 'Position': position if position.lower() != 'nan' else 'Staff',
-                'Days Worked': days_worked,
+                'Days Worked / OT': days_worked,
                 'Base Salary (RM)': base,
                 'Earned Basic (RM)': earned_basic,
                 'EPF Employee (RM)': epf_ee,
@@ -115,9 +135,9 @@ if uploaded_file is not None:
         payroll_df = pd.DataFrame(records)
         
         if len(payroll_df) == 0:
-            st.warning("No staff rows extracted. Please verify sheet selection.")
+            st.warning(f"No staff rows extracted from sheet '{selected_sheet}'. Please verify selection.")
         else:
-            st.success(f"Success! Accurately extracted and computed **{len(payroll_df)}** staff rows from `{selected_sheet}`.")
+            st.success(f"Success! Accurately extracted and computed **{len(payroll_df)}** staff records from sheet `{selected_sheet}`.")
             
             st.subheader("📊 Summary Payroll Breakdown")
             col1, col2, col3, col4 = st.columns(4)
