@@ -40,17 +40,15 @@ if uploaded_file is not None:
         sheet_options = [s for s in xls.sheet_names if 'SHEET1' not in s.upper()]
         selected_sheet = st.sidebar.selectbox("Select Attendance Sheet", sheet_options if sheet_options else xls.sheet_names)
         
-        # Read Excel using header row index 8 (where NO., STAFF / CREW NAME, POSITION, TOTAL reside)
+        # Read Excel using header row index 8
         df = pd.read_excel(uploaded_file, sheet_name=selected_sheet, header=8)
         df.columns = [str(c).strip() for c in df.columns]
         
-        # Identify name column (usually column index 2 or contains 'NAME')
-        name_col = next((c for c in df.columns if 'NAME' in c.upper()), df.columns[2] if len(df.columns) > 2 else None)
-        pos_col = next((c for c in df.columns if 'POSITION' in c.upper()), df.columns[4] if len(df.columns) > 4 else None)
-        ic_col = next((c for c in df.columns if 'I/C' in c.upper() or ('STAFF' in c.upper() and c != name_col)), df.columns[3] if len(df.columns) > 3 else None)
-        total_col = next((c for c in df.columns if c.upper() == 'TOTAL'), df.columns[40] if len(df.columns) > 40 else df.columns[-1])
+        name_col = next((c for c in df.columns if 'NAME' in c.upper()), 'STAFF / CREW NAME')
+        pos_col = next((c for c in df.columns if 'POSITION' in c.upper()), 'POSITION')
+        ic_col = next((c for c in df.columns if 'I/C' in c.upper() or 'STAFF / CREW' in c.upper() and c != name_col), 'STAFF / CREW')
+        total_col = next((c for c in df.columns if c.upper() == 'TOTAL'), 'TOTAL')
         
-        # Clean data: drop rows where name is missing or NaN
         df_clean = df.dropna(subset=[name_col]).copy()
         
         default_base = st.sidebar.number_input("Default Base Salary for Crew (RM)", value=2200.0, step=100.0)
@@ -60,12 +58,12 @@ if uploaded_file is not None:
         for idx, row in df_clean.iterrows():
             name = str(row.get(name_col, '')).strip()
             
-            # Skip invalid header/sub-header descriptions
-            if not name or name.lower() == 'nan' or 'NAME' in name.upper() or 'NO.' in name.upper() or name.isdigit() or len(name) < 3:
+            # Skip invalid header or metadata rows
+            if not name or name.lower() == 'nan' or 'NAME' in name.upper() or 'NO.' in name.upper() or name.isdigit():
                 continue
                 
-            position = str(row.get(pos_col, 'Staff')).strip() if pos_col else 'Staff'
-            ic_no = str(row.get(ic_col, '-')).strip() if ic_col else '-'
+            position = str(row.get(pos_col, 'Staff')).strip()
+            ic_no = str(row.get(ic_col, '-')).strip()
             
             raw_days = row.get(total_col, 26)
             try:
@@ -87,7 +85,7 @@ if uploaded_file is not None:
             
             records.append({
                 'Staff Name': name,
-                'IC / ID': ic_no,
+                'IC / ID': ic_no if ic_no.lower() != 'nan' else '-',
                 'Position': position if position.lower() != 'nan' else 'Staff',
                 'Days Worked': days_worked,
                 'Base Salary (RM)': base,
