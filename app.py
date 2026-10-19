@@ -7,7 +7,7 @@ st.set_page_config(page_title="Malaysia Automated Payroll System", page_icon="�
 st.title("🇲🇾 Malaysia Web Payroll Engine")
 st.markdown("""
 **Drop & Calculate System**: Drop your monthly attendance Excel sheet. 
-The engine auto-detects sheets, extracts all staff rows accurately, and calculates EPF, SOCSO, EIS, and PCB/Net Pay.
+The engine auto-detects sheets, dynamically locates staff tables, and calculates EPF, SOCSO, EIS, and PCB/Net Pay.
 """)
 
 # --- MALAYSIAN STATUTORY RULES ---
@@ -40,14 +40,24 @@ if uploaded_file is not None:
         sheet_options = [s for s in xls.sheet_names if 'SHEET1' not in s.upper()]
         selected_sheet = st.sidebar.selectbox("Select Attendance Sheet", sheet_options if sheet_options else xls.sheet_names)
         
-        # Read Excel using header row index 8 for standard attendance structure
-        df = pd.read_excel(uploaded_file, sheet_name=selected_sheet, header=8)
+        # Dynamically find header row containing staff name columns
+        raw_df = pd.read_excel(uploaded_file, sheet_name=selected_sheet, header=None)
+        header_row = 8 # default fallback
+        for idx, row in raw_df.iterrows():
+            row_str = " ".join([str(v).upper() for v in row.values if pd.notna(v)])
+            if 'STAFF / CREW NAME' in row_str or ('NAME' in row_str and 'POSITION' in row_str):
+                header_row = idx
+                break
+        
+        # Read Excel using the dynamically detected header row
+        df = pd.read_excel(uploaded_file, sheet_name=selected_sheet, header=header_row)
         df.columns = [str(c).strip() for c in df.columns]
         
-        name_col = next((c for c in df.columns if 'NAME' in c.upper()), 'STAFF / CREW NAME')
-        pos_col = next((c for c in df.columns if 'POSITION' in c.upper()), 'POSITION')
-        ic_col = next((c for c in df.columns if 'I/C' in c.upper() or ('STAFF' in c.upper() and c != name_col)), 'STAFF / CREW')
-        total_col = next((c for c in df.columns if c.upper() == 'TOTAL'), 'TOTAL')
+        # Locate columns dynamically
+        name_col = next((c for c in df.columns if 'NAME' in c.upper()), df.columns[2] if len(df.columns) > 2 else None)
+        pos_col = next((c for c in df.columns if 'POSITION' in c.upper()), df.columns[4] if len(df.columns) > 4 else None)
+        ic_col = next((c for c in df.columns if 'I/C' in c.upper() or ('STAFF' in c.upper() and c != name_col)), df.columns[3] if len(df.columns) > 3 else None)
+        total_col = next((c for c in df.columns if c.upper() == 'TOTAL'), df.columns[40] if len(df.columns) > 40 else df.columns[-1])
         
         df_clean = df.dropna(subset=[name_col]).copy()
         
@@ -127,8 +137,4 @@ if uploaded_file is not None:
                 label="📥 Download Department Payroll Excel Report (.xlsx)",
                 data=processed_data,
                 file_name=f"Payroll_Summary_{selected_sheet}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-        
-    except Exception as e:
-        st.error(f"Error processing file: {e}")
+                mime="
