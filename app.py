@@ -44,11 +44,13 @@ if uploaded_file is not None:
         df = pd.read_excel(uploaded_file, sheet_name=selected_sheet, header=8)
         df.columns = [str(c).strip() for c in df.columns]
         
+        # Dynamically locate key columns
         name_col = next((c for c in df.columns if 'NAME' in c.upper()), 'STAFF / CREW NAME')
         pos_col = next((c for c in df.columns if 'POSITION' in c.upper()), 'POSITION')
-        ic_col = next((c for c in df.columns if 'I/C' in c.upper() or 'STAFF / CREW' in c.upper() and c != name_col), 'STAFF / CREW')
+        ic_col = next((c for c in df.columns if 'I/C' in c.upper() or ('STAFF' in c.upper() and c != name_col)), 'STAFF / CREW')
         total_col = next((c for c in df.columns if c.upper() == 'TOTAL'), 'TOTAL')
         
+        # Filter valid staff rows
         df_clean = df.dropna(subset=[name_col]).copy()
         
         default_base = st.sidebar.number_input("Default Base Salary for Crew (RM)", value=2200.0, step=100.0)
@@ -58,8 +60,8 @@ if uploaded_file is not None:
         for idx, row in df_clean.iterrows():
             name = str(row.get(name_col, '')).strip()
             
-            # Skip invalid header or metadata rows
-            if not name or name.lower() == 'nan' or 'NAME' in name.upper() or 'NO.' in name.upper() or name.isdigit():
+            # Filter out empty, NaN, or non-staff header titles
+            if not name or name.lower() == 'nan' or 'NAME' in name.upper() or 'NO.' in name.upper() or name.isdigit() or len(name) < 2:
                 continue
                 
             position = str(row.get(pos_col, 'Staff')).strip()
