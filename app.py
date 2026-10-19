@@ -40,8 +40,8 @@ if uploaded_file is not None:
         sheet_options = [s for s in xls.sheet_names if 'SHEET1' not in s.upper()]
         selected_sheet = st.sidebar.selectbox("Select Attendance Sheet", sheet_options if sheet_options else xls.sheet_names)
         
-        # Read Excel using header row index 7 (where STAFF / CREW NAME is located)
-        df = pd.read_excel(uploaded_file, sheet_name=selected_sheet, header=7)
+        # Read Excel using header row index 8 for standard attendance structure
+        df = pd.read_excel(uploaded_file, sheet_name=selected_sheet, header=8)
         df.columns = [str(c).strip() for c in df.columns]
         
         name_col = next((c for c in df.columns if 'NAME' in c.upper()), 'STAFF / CREW NAME')
@@ -58,8 +58,8 @@ if uploaded_file is not None:
         for idx, row in df_clean.iterrows():
             name = str(row.get(name_col, '')).strip()
             
-            # Skip header or subheader metadata rows
-            if not name or name.lower() == 'nan' or 'NAME' in name.upper() or 'NO.' in name.upper() or name.isdigit() or 'I/C' in name.upper():
+            # Skip header or metadata rows
+            if not name or name.lower() == 'nan' or 'NAME' in name.upper() or 'NO.' in name.upper() or name.isdigit():
                 continue
                 
             position = str(row.get(pos_col, 'Staff')).strip()
