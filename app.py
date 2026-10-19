@@ -37,23 +37,36 @@ if uploaded_file is not None:
     try:
         xls = pd.ExcelFile(uploaded_file)
         
-        sheet_options = [s for s in xls.sheet_names if 'SHEET1' not in s.upper()]
-        selected_sheet = st.sidebar.selectbox("Select Attendance Sheet", sheet_options if sheet_options else xls.sheet_names)
+        # Filter sheets and prioritize 'ATTENDANCE (2)' or 'ATTENDANCE'
+        all_sheets = xls.sheet_names
+        filtered_sheets = [s for s in all_sheets if 'AGENCY' not in s.upper() and 'SHEET1' not in s.upper()]
         
-        # Dynamically find header row containing staff name columns
+        if not filtered_sheets:
+            filtered_sheets = all_sheets
+            
+        # Set default index to ATTENDANCE (2) if present
+        default_index = 0
+        for i, s in enumerate(filtered_sheets):
+            if 'ATTENDANCE (2)' in s.upper():
+                default_index = i
+                break
+            elif 'ATTENDANCE' in s.upper():
+                default_index = i
+                
+        selected_sheet = st.sidebar.selectbox("Select Attendance Sheet", filtered_sheets, index=default_index)
+        
+        # Read Excel using header row index 8 (Standard structure for ATTENDANCE (2))
         raw_df = pd.read_excel(uploaded_file, sheet_name=selected_sheet, header=None)
-        header_row = 8 # default fallback
+        header_row = 8
         for idx, row in raw_df.iterrows():
             row_str = " ".join([str(v).upper() for v in row.values if pd.notna(v)])
             if 'STAFF / CREW NAME' in row_str or ('NAME' in row_str and 'POSITION' in row_str):
                 header_row = idx
                 break
         
-        # Read Excel using the dynamically detected header row
         df = pd.read_excel(uploaded_file, sheet_name=selected_sheet, header=header_row)
         df.columns = [str(c).strip() for c in df.columns]
         
-        # Locate columns dynamically
         name_col = next((c for c in df.columns if 'NAME' in c.upper()), df.columns[2] if len(df.columns) > 2 else None)
         pos_col = next((c for c in df.columns if 'POSITION' in c.upper()), df.columns[4] if len(df.columns) > 4 else None)
         ic_col = next((c for c in df.columns if 'I/C' in c.upper() or ('STAFF' in c.upper() and c != name_col)), df.columns[3] if len(df.columns) > 3 else None)
@@ -68,7 +81,6 @@ if uploaded_file is not None:
         for idx, row in df_clean.iterrows():
             name = str(row.get(name_col, '')).strip()
             
-            # Skip header or metadata rows
             if not name or name.lower() == 'nan' or 'NAME' in name.upper() or 'NO.' in name.upper() or name.isdigit():
                 continue
                 
