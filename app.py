@@ -7,10 +7,10 @@ st.set_page_config(page_title="Malaysia Automated Payroll System", page_icon="�
 st.title("🇲🇾 Malaysia Web Payroll Engine")
 st.markdown("""
 **Drop & Calculate System**: Drop your monthly attendance & overtime Excel sheet. 
-The engine auto-detects attendance and overtime sheets, merges OT hours, and calculates EPF, SOCSO, EIS, PCB, and Net Pay.
+The engine extracts all staff members, merges Overtime (OT) hours, and calculates EPF, SOCSO, EIS, PCB, and Net Pay automatically.
 """)
 
-# --- MALAYSIAN STATUTORY & OT RULES ---
+# --- MALAYSIAN STATUTORY RULES ---
 def compute_epf(salary):
     ee_epf = round(salary * 0.11, 2)
     er_epf = round(salary * 0.13 if salary <= 5000 else salary * 0.12, 2)
@@ -50,46 +50,41 @@ if uploaded_file is not None:
                 
         selected_sheet = st.sidebar.selectbox("Select Attendance Sheet", filtered_sheets, index=default_index)
         
-        # 1. READ ATTENDANCE SHEET
-        raw_df = pd.read_excel(uploaded_file, sheet_name=selected_sheet, header=None)
-        header_row = 8
-        for idx, row in raw_df.iterrows():
-            row_vals = [str(v).strip().upper() for v in row.values if pd.notna(v)]
-            row_str = " ".join(row_vals)
-            if ('NAME' in row_str or 'STAFF' in row_str) and ('NO.' in row_str or 'POSITION' in row_str):
-                header_row = idx
-                break
+        # Determine exact header row per sheet
+        header_row = 8 if 'ATTENDANCE' in selected_sheet.upper() else 5
         
+        # Read selected sheet
         df = pd.read_excel(uploaded_file, sheet_name=selected_sheet, header=header_row)
         df.columns = [str(c).strip() for c in df.columns]
         
-        name_col = next((c for c in df.columns if 'NAME' in c.upper()), df.columns[2] if len(df.columns) > 2 else None)
-        pos_col = next((c for c in df.columns if 'POSITION' in c.upper()), None)
-        ic_col = next((c for c in df.columns if 'I/C' in c.upper() or ('STAFF' in c.upper() and c != name_col)), None)
-        total_col = next((c for c in df.columns if c.upper() == 'TOTAL'), None)
+        name_col = next((c for c in df.columns if 'NAME' in c.upper()), 'STAFF / CREW NAME')
+        pos_col = next((c for c in df.columns if 'POSITION' in c.upper()), 'POSITION')
+        ic_col = next((c for c in df.columns if 'I/C' in c.upper() or ('STAFF' in c.upper() and c != name_col)), 'STAFF / CREW')
+        total_col = next((c for c in df.columns if c.upper() == 'TOTAL'), 'TOTAL')
         
+        # Clean data
         df_clean = df.dropna(subset=[name_col]).copy()
         
-        # 2. READ OVERTIME SHEET IF AVAILABLE
+        # READ OVERTIME SHEET FOR OT HOURS
         ot_data = {}
         if 'OVERTIME' in xls.sheet_names:
             try:
                 ot_df = pd.read_excel(uploaded_file, sheet_name='OVERTIME', header=5)
                 ot_df.columns = [str(c).strip() for c in ot_df.columns]
-                ot_name_col = next((c for c in ot_df.columns if 'NAME' in c.upper()), ot_df.columns[2])
-                
-                # Last 3 columns usually represent OT hours (Normal 1.5x, Rest Day 2.0x, PH 3.5x etc.)
-                col_ot1 = ot_df.columns[-3]
-                col_ot2 = ot_df.columns[-2]
-                col_ot3 = ot_df.columns[-1]
+                ot_name_col = next((c for c in ot_df.columns if 'NAME' in c.upper()), 'NAME')
                 
                 for _, ot_row in ot_df.iterrows():
                     ot_name = str(ot_row.get(ot_name_col, '')).strip().upper()
                     if ot_name and ot_name != 'NAN' and 'NAME' not in ot_name:
                         try:
-                            h1 = float(ot_row.get(col_ot1, 0) or 0)
-                            h2 = float(ot_row.get(col_ot2, 0) or 0)
-                            h3 = float(ot_row.get(col_ot3, 0) or 0)
+                            # Extract last 3 columns for OT 1.5x, 2.0x, 3.0x
+                            val1 = ot_row.iloc[-3]
+                            val2 = ot_row.iloc[-2]
+                            val3 = ot_row.iloc[-1]
+                            
+                            h1 = float(val1) if pd.notna(val1) else 0.0
+                            h2 = float(val2) if pd.notna(val2) else 0.0
+                            h3 = float(val3) if pd.notna(val3) else 0.0
                             ot_data[ot_name] = {'ot_1.5': h1, 'ot_2.0': h2, 'ot_3.0': h3}
                         except:
                             pass
@@ -103,13 +98,13 @@ if uploaded_file is not None:
         for idx, row in df_clean.iterrows():
             name = str(row.get(name_col, '')).strip()
             
-            if not name or name.lower() == 'nan' or 'NAME' in name.upper() or 'NO.' in name.upper() or len(name) < 2:
+            if not name or name.lower() == 'nan' or 'NAME' in name.upper() or 'NO.' in name.upper() or name.isdigit() or len(name) < 2:
                 continue
                 
-            position = str(row.get(pos_col, 'Staff')).strip() if pos_col else 'Staff'
-            ic_no = str(row.get(ic_col, '-')).strip() if ic_col else '-'
+            position = str(row.get(pos_col, 'Staff')).strip() if pos_col in df.columns else 'Staff'
+            ic_no = str(row.get(ic_col, '-')).strip() if ic_col in df.columns else '-'
             
-            raw_days = row.get(total_col, 26) if total_col else 26
+            raw_days = row.get(total_col, 26) if total_col in df.columns else 26
             try:
                 days_worked = float(raw_days)
             except:
@@ -118,13 +113,10 @@ if uploaded_file is not None:
             is_manager = "MANAGER" in position.upper()
             base = manager_base if is_manager else default_base
             
-            # Earned Basic Pay based on attendance days (standard 26 days)
             earned_basic = round((base / 26.0) * min(days_worked, 26.0), 2)
-            
-            # Hourly rate calculation (Base / 26 days / 8 hours)
             hourly_rate = base / 26.0 / 8.0
             
-            # Fetch Overtime Hours
+            # Match Overtime hours by staff name
             ot_info = ot_data.get(name.upper(), {'ot_1.5': 0.0, 'ot_2.0': 0.0, 'ot_3.0': 0.0})
             ot_pay = round((ot_info['ot_1.5'] * hourly_rate * 1.5) + 
                            (ot_info['ot_2.0'] * hourly_rate * 2.0) + 
@@ -132,7 +124,6 @@ if uploaded_file is not None:
             
             gross_salary = round(earned_basic + ot_pay, 2)
             
-            # Statutory Deductions
             epf_ee, epf_er = compute_epf(gross_salary)
             socso_ee, socso_er, eis_ee, eis_er = compute_socso_eis(gross_salary)
             pcb = compute_pcb(gross_salary)
@@ -168,7 +159,7 @@ if uploaded_file is not None:
         if len(payroll_df) == 0:
             st.warning("No staff rows extracted. Please verify sheet selection.")
         else:
-            st.success(f"Success! Accurately extracted and computed **{len(payroll_df)}** staff records with Overtime included from `{selected_sheet}`.")
+            st.success(f"Success! Accurately extracted **{len(payroll_df)}** staff records with Overtime included from `{selected_sheet}`.")
             
             st.subheader("📊 Summary Payroll Breakdown")
             col1, col2, col3, col4 = st.columns(4)
