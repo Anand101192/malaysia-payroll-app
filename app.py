@@ -7,7 +7,7 @@ st.set_page_config(page_title="Malaysia Automated Payroll System", page_icon="�
 st.title("🇲🇾 Malaysia Web Payroll Engine")
 st.markdown("""
 **Drop & Calculate System**: Drop your monthly attendance & overtime Excel sheet. 
-The engine extracts all staff members, merges Overtime (OT) hours, and calculates EPF, SOCSO, EIS, PCB, and Net Pay automatically.
+The engine extracts all staff members, merges Overtime (OT) hours, and calculates EPF, SOCSO, EIS, PCB, Gross Pay, and Net Pay automatically.
 """)
 
 # --- MALAYSIAN STATUTORY RULES ---
@@ -54,7 +54,6 @@ if uploaded_file is not None:
         df = pd.read_excel(uploaded_file, sheet_name=selected_sheet, header=8)
         df.columns = [str(c).strip() for c in df.columns]
         
-        # Explicitly target STAFF / CREW NAME
         name_col = 'STAFF / CREW NAME' if 'STAFF / CREW NAME' in df.columns else next((c for c in df.columns if 'NAME' in c.upper() and c != 'RESIGN/TERMINATE'), df.columns[2])
         pos_col = 'POSITION' if 'POSITION' in df.columns else None
         ic_col = 'STAFF / CREW' if 'STAFF / CREW' in df.columns else None
@@ -120,6 +119,7 @@ if uploaded_file is not None:
             
             gross_salary = round(earned_basic + ot_pay, 2)
             
+            # Statutory Deductions computed on Gross Salary (Basic + OT)
             epf_ee, epf_er = compute_epf(gross_salary)
             socso_ee, socso_er, eis_ee, eis_er = compute_socso_eis(gross_salary)
             pcb = compute_pcb(gross_salary)
@@ -137,14 +137,14 @@ if uploaded_file is not None:
                 'OT Hours (1.5x)': ot_info['ot_1.5'],
                 'OT Hours (2.0x)': ot_info['ot_2.0'],
                 'OT Hours (3.0x)': ot_info['ot_3.0'],
-                'OT Pay (RM)': ot_pay,
-                'Gross Salary (RM)': gross_salary,
+                'Total OT Pay (RM)': ot_pay,
+                'Total Gross Salary (RM)': gross_salary,
                 'EPF Employee (RM)': epf_ee,
                 'SOCSO Employee (RM)': socso_ee,
                 'EIS Employee (RM)': eis_ee,
                 'PCB Tax (RM)': pcb,
                 'Total Deductions (RM)': total_deductions,
-                'Net Salary Payable (RM)': net_pay,
+                'Net Take-Home Salary (RM)': net_pay,
                 'EPF Employer (RM)': epf_er,
                 'SOCSO Employer (RM)': socso_er,
                 'EIS Employer (RM)': eis_er
@@ -160,9 +160,9 @@ if uploaded_file is not None:
             st.subheader("📊 Summary Payroll Breakdown")
             col1, col2, col3, col4 = st.columns(4)
             col1.metric("Total Staff Count", f"{len(payroll_df)}")
-            col2.metric("Total Gross Payout", f"RM {payroll_df['Gross Salary (RM)'].sum():,.2f}")
+            col2.metric("Total Gross Payout", f"RM {payroll_df['Total Gross Salary (RM)'].sum():,.2f}")
             col3.metric("Total Employee Deductions", f"RM {payroll_df['Total Deductions (RM)'].sum():,.2f}")
-            col4.metric("Total Net Payable", f"RM {payroll_df['Net Salary Payable (RM)'].sum():,.2f}")
+            col4.metric("Total Net Payable", f"RM {payroll_df['Net Take-Home Salary (RM)'].sum():,.2f}")
             
             st.subheader("📋 Calculated Payroll Data")
             st.dataframe(payroll_df, use_container_width=True)
