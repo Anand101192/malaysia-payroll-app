@@ -8,7 +8,7 @@ st.set_page_config(page_title="Malaysia Automated Payroll System", page_icon="�
 st.title("🇲🇾 Malaysia Web Payroll Engine")
 st.markdown("""
 **Drop & Calculate System**: Drop your monthly attendance & overtime Excel sheet. 
-The engine extracts all staff members, merges OT hours, displays all deduction columns with precise 2-decimal formatting, and generates an **auto-calculating Excel report**.
+The engine extracts all staff members, merges OT hours, displays all employee and employer deduction/contribution columns, formats days cleanly without decimals, and generates an **auto-calculating Excel report**.
 """)
 
 # --- FILE UPLOADER ---
@@ -91,12 +91,14 @@ if uploaded_file is not None:
             
             ot_info = ot_data.get(name.upper(), {'ot_1.5': 0.0, 'ot_2.0': 0.0, 'ot_3.0': 0.0})
             
-            # Python values formatted to 2 decimal places for web display
+            # Python calculations
             earned_basic_val = round((base / 26.0) * min(days_worked, 26.0), 2)
             hourly_rate = base / 26.0 / 8.0
             ot_pay_val = round((ot_info['ot_1.5'] * hourly_rate * 1.5) + 
                                (ot_info['ot_2.0'] * hourly_rate * 2.0) + 
                                (ot_info['ot_3.0'] * hourly_rate * 3.0), 2)
+            
+            # Employee Deductions
             epf_val = round(earned_basic_val * 0.11, 2)
             socso_val = round(min(earned_basic_val, 5000.0) * 0.005, 2)
             socso_24h_val = round(earned_basic_val * 0.0075, 2)
@@ -106,11 +108,16 @@ if uploaded_file is not None:
             basic_after_ded_val = round(earned_basic_val - total_ded_val, 2)
             net_pay_val = round(basic_after_ded_val + ot_pay_val, 2)
             
+            # Employer Contributions
+            epf_er_val = round(earned_basic_val * (0.13 if earned_basic_val <= 5000 else 0.12), 2)
+            socso_er_val = round(min(earned_basic_val, 5000.0) * 0.0175, 2)
+            eis_er_val = round(min(earned_basic_val, 5000.0) * 0.002, 2)
+            
             records.append({
                 'Staff Name': name,
                 'IC / ID': ic_no if ic_no.lower() != 'nan' else '-',
                 'Position': position if position.lower() != 'nan' else 'Staff',
-                'Days Worked': f"{days_worked:.2f}",
+                'Days Worked': int(round(days_worked)),  # Clean whole number
                 'Base Salary (RM)': f"{base:.2f}",
                 'Earned Basic (RM)': f"{earned_basic_val:.2f}",
                 'EPF Employee (RM)': f"{epf_val:.2f}",
@@ -120,11 +127,14 @@ if uploaded_file is not None:
                 'PCB Tax (RM)': f"{pcb_val:.2f}",
                 'Total Deductions (RM)': f"{total_ded_val:.2f}",
                 'Basic Salary After Deductions (RM)': f"{basic_after_ded_val:.2f}",
-                'OT Hours (1.5x)': f"{ot_info['ot_1.5']:.2f}",
-                'OT Hours (2.0x)': f"{ot_info['ot_2.0']:.2f}",
-                'OT Hours (3.0x)': f"{ot_info['ot_3.0']:.2f}",
+                'OT Hours (1.5x)': int(round(ot_info['ot_1.5'])),
+                'OT Hours (2.0x)': int(round(ot_info['ot_2.0'])),
+                'OT Hours (3.0x)': int(round(ot_info['ot_3.0'])),
                 'Total OT Pay (RM)': f"{ot_pay_val:.2f}",
-                'Net Salary Payable (RM)': f"{net_pay_val:.2f}"
+                'Net Salary Payable (RM)': f"{net_pay_val:.2f}",
+                'EPF Employer (RM)': f"{epf_er_val:.2f}",
+                'SOCSO Employer (RM)': f"{socso_er_val:.2f}",
+                'EIS Employer (RM)': f"{eis_er_val:.2f}"
             })
             
         display_df = pd.DataFrame(records)
@@ -132,7 +142,7 @@ if uploaded_file is not None:
         if len(display_df) == 0:
             st.warning("No staff rows extracted. Please verify sheet selection.")
         else:
-            st.success(f"Success! Extracted **{len(display_df)}** staff records with all deduction columns and 2-decimal formatting from `{selected_sheet}`.")
+            st.success(f"Success! Extracted **{len(display_df)}** staff records with employer sections and clean day numbering from `{selected_sheet}`.")
             
             st.subheader("📊 Summary Payroll Breakdown")
             col1, col2, col3, col4 = st.columns(4)
@@ -144,7 +154,7 @@ if uploaded_file is not None:
             st.subheader("📋 Calculated Payroll Data")
             st.dataframe(display_df, use_container_width=True)
             
-            # Build Excel workbook with live formulas and 0.00 number formatting
+            # Build Excel workbook with live formulas and proper cell formatting
             wb = openpyxl.Workbook()
             ws = wb.active
             ws.title = "Payroll Summary"
@@ -158,7 +168,7 @@ if uploaded_file is not None:
                     r['Staff Name'],
                     r['IC / ID'],
                     r['Position'],
-                    float(r['Days Worked']),
+                    int(r['Days Worked']),
                     float(r['Base Salary (RM)']),
                     f'=IF(D{row_num}>26, (E{row_num}/26)*26, (E{row_num}/26)*D{row_num})',
                     f'=F{row_num}*0.11',
@@ -168,18 +178,24 @@ if uploaded_file is not None:
                     f'=IF(F{row_num}>3100, (F{row_num}-3100)*0.03, 0)',
                     f'=SUM(G{row_num}:K{row_num})',
                     f'=F{row_num}-L{row_num}',
-                    float(r['OT Hours (1.5x)']),
-                    float(r['OT Hours (2.0x)']),
-                    float(r['OT Hours (3.0x)']),
+                    int(r['OT Hours (1.5x)']),
+                    int(r['OT Hours (2.0x)']),
+                    int(r['OT Hours (3.0x)']),
                     f'=(N{row_num}*(E{row_num}/26/8)*1.5) + (O{row_num}*(E{row_num}/26/8)*2.0) + (P{row_num}*(E{row_num}/26/8)*3.0)',
-                    f'=M{row_num}+Q{row_num}'
+                    f'=M{row_num}+Q{row_num}',
+                    f'=IF(F{row_num}<=5000, F{row_num}*0.13, F{row_num}*0.12)',
+                    f'=MIN(F{row_num}, 5000)*0.0175',
+                    f'=MIN(F{row_num}, 5000)*0.002'
                 ]
                 ws.append(row_formulas)
                 
-            # Apply Number Format "0.00" to numeric columns in Excel
-            for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=4, max_col=18):
-                for cell in row:
-                    cell.number_format = '0.00'
+            # Apply number formats in Excel
+            for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=4, max_col=ws.max_column):
+                for col_idx, cell in enumerate(row, start=4):
+                    if col_idx in [4, 14, 15, 16]:  # Days worked and OT hours (Whole numbers)
+                        cell.number_format = '#,##0'
+                    else:  # Monetary columns
+                        cell.number_format = '0.00'
 
             output = io.BytesIO()
             wb.save(output)
