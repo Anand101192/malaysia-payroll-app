@@ -7,7 +7,7 @@ st.set_page_config(page_title="Malaysia Automated Payroll System", page_icon="�
 st.title("🇲🇾 Malaysia Web Payroll Engine")
 st.markdown("""
 **Drop & Calculate System**: Drop your monthly attendance & overtime Excel sheet. 
-The engine extracts all staff members, merges Overtime (OT) hours, and calculates EPF, SOCSO, EIS, PCB, Gross Pay, and Net Pay automatically.
+The engine extracts all staff members, applies statutory deductions on Basic Salary (including SOCSO 24 Jam Perlindungan 0.75%), and adds Overtime Pay to generate Net Take-Home Pay.
 """)
 
 # --- MALAYSIAN STATUTORY RULES ---
@@ -21,9 +21,12 @@ def compute_socso_eis(salary):
     socso_ee = round(capped_wages * 0.005, 2)
     socso_er = round(capped_wages * 0.0175, 2)
     
+    # SOCSO 24 Jam Perlindungan (0.75% deducted from Basic)
+    socso_24h_ee = round(salary * 0.0075, 2)
+    
     eis_ee = round(min(salary, 5000.0) * 0.002, 2)
     eis_er = round(min(salary, 5000.0) * 0.002, 2)
-    return socso_ee, socso_er, eis_ee, eis_er
+    return socso_ee, socso_er, socso_24h_ee, eis_ee, eis_er
 
 def compute_pcb(taxable_gross):
     if taxable_gross <= 3100:
@@ -117,15 +120,18 @@ if uploaded_file is not None:
                            (ot_info['ot_2.0'] * hourly_rate * 2.0) + 
                            (ot_info['ot_3.0'] * hourly_rate * 3.0), 2)
             
-            gross_salary = round(earned_basic + ot_pay, 2)
+            # Deductions on Earned Basic Salary
+            epf_ee, epf_er = compute_epf(earned_basic)
+            socso_ee, socso_er, socso_24h_ee, eis_ee, eis_er = compute_socso_eis(earned_basic)
+            pcb = compute_pcb(earned_basic)
             
-            # Statutory Deductions computed on Gross Salary (Basic + OT)
-            epf_ee, epf_er = compute_epf(gross_salary)
-            socso_ee, socso_er, eis_ee, eis_er = compute_socso_eis(gross_salary)
-            pcb = compute_pcb(gross_salary)
+            total_deductions = round(epf_ee + socso_ee + socso_24h_ee + eis_ee + pcb, 2)
             
-            total_deductions = round(epf_ee + socso_ee + eis_ee + pcb, 2)
-            net_pay = round(gross_salary - total_deductions, 2)
+            # Gross Basic After Deductions
+            basic_after_deductions = round(earned_basic - total_deductions, 2)
+            
+            # Net Pay = Gross Salary After Deductions + OT Pay
+            net_pay = round(basic_after_deductions + ot_pay, 2)
             
             records.append({
                 'Staff Name': name,
@@ -134,17 +140,18 @@ if uploaded_file is not None:
                 'Days Worked': days_worked,
                 'Base Salary (RM)': base,
                 'Earned Basic (RM)': earned_basic,
+                'EPF Employee (RM)': epf_ee,
+                'SOCSO Employee (RM)': socso_ee,
+                'SOCSO 24 Jam perlindungan (RM)': socso_24h_ee,
+                'EIS Employee (RM)': eis_ee,
+                'PCB Tax (RM)': pcb,
+                'Total Deductions (RM)': total_deductions,
+                'Basic Salary After Deductions (RM)': basic_after_deductions,
                 'OT Hours (1.5x)': ot_info['ot_1.5'],
                 'OT Hours (2.0x)': ot_info['ot_2.0'],
                 'OT Hours (3.0x)': ot_info['ot_3.0'],
                 'Total OT Pay (RM)': ot_pay,
-                'Total Gross Salary (RM)': gross_salary,
-                'EPF Employee (RM)': epf_ee,
-                'SOCSO Employee (RM)': socso_ee,
-                'EIS Employee (RM)': eis_ee,
-                'PCB Tax (RM)': pcb,
-                'Total Deductions (RM)': total_deductions,
-                'Net Take-Home Salary (RM)': net_pay,
+                'Net Salary Payable (RM)': net_pay,
                 'EPF Employer (RM)': epf_er,
                 'SOCSO Employer (RM)': socso_er,
                 'EIS Employer (RM)': eis_er
@@ -155,14 +162,14 @@ if uploaded_file is not None:
         if len(payroll_df) == 0:
             st.warning("No staff rows extracted. Please verify sheet selection.")
         else:
-            st.success(f"Success! Accurately extracted **{len(payroll_df)}** staff records with Overtime included from `{selected_sheet}`.")
+            st.success(f"Success! Accurately extracted **{len(payroll_df)}** staff records with SOCSO 24 Jam & OT Pay included from `{selected_sheet}`.")
             
             st.subheader("📊 Summary Payroll Breakdown")
             col1, col2, col3, col4 = st.columns(4)
             col1.metric("Total Staff Count", f"{len(payroll_df)}")
-            col2.metric("Total Gross Payout", f"RM {payroll_df['Total Gross Salary (RM)'].sum():,.2f}")
-            col3.metric("Total Employee Deductions", f"RM {payroll_df['Total Deductions (RM)'].sum():,.2f}")
-            col4.metric("Total Net Payable", f"RM {payroll_df['Net Take-Home Salary (RM)'].sum():,.2f}")
+            col2.metric("Total Basic Earned", f"RM {payroll_df['Earned Basic (RM)'].sum():,.2f}")
+            col3.metric("Total OT Payout", f"RM {payroll_df['Total OT Pay (RM)'].sum():,.2f}")
+            col4.metric("Total Net Payable", f"RM {payroll_df['Net Salary Payable (RM)'].sum():,.2f}")
             
             st.subheader("📋 Calculated Payroll Data")
             st.dataframe(payroll_df, use_container_width=True)
