@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import openpyxl
 import io
 
 st.set_page_config(page_title="Malaysia Automated Payroll System", page_icon="🇲🇾", layout="wide")
@@ -7,31 +8,8 @@ st.set_page_config(page_title="Malaysia Automated Payroll System", page_icon="�
 st.title("🇲🇾 Malaysia Web Payroll Engine")
 st.markdown("""
 **Drop & Calculate System**: Drop your monthly attendance & overtime Excel sheet. 
-The engine extracts all staff members, applies statutory deductions on Basic Salary (including SOCSO 24 Jam Perlindungan 0.75%), and adds Overtime Pay to generate Net Take-Home Pay.
+The engine extracts all staff members, merges OT hours, and generates an **auto-calculating Excel report** with live formulas for custom salary packages.
 """)
-
-# --- MALAYSIAN STATUTORY RULES ---
-def compute_epf(salary):
-    ee_epf = round(salary * 0.11, 2)
-    er_epf = round(salary * 0.13 if salary <= 5000 else salary * 0.12, 2)
-    return ee_epf, er_epf
-
-def compute_socso_eis(salary):
-    capped_wages = min(salary, 5000.0)
-    socso_ee = round(capped_wages * 0.005, 2)
-    socso_er = round(capped_wages * 0.0175, 2)
-    
-    # SOCSO 24 Jam Perlindungan (0.75% deducted from Basic)
-    socso_24h_ee = round(salary * 0.0075, 2)
-    
-    eis_ee = round(min(salary, 5000.0) * 0.002, 2)
-    eis_er = round(min(salary, 5000.0) * 0.002, 2)
-    return socso_ee, socso_er, socso_24h_ee, eis_ee, eis_er
-
-def compute_pcb(taxable_gross):
-    if taxable_gross <= 3100:
-        return 0.0
-    return round((taxable_gross - 3100) * 0.03, 2)
 
 # --- FILE UPLOADER ---
 uploaded_file = st.file_uploader("Drop Attendance Excel File Here", type=["xlsx", "xls"])
@@ -111,27 +89,8 @@ if uploaded_file is not None:
             is_manager = "MANAGER" in position.upper()
             base = manager_base if is_manager else default_base
             
-            earned_basic = round((base / 26.0) * min(days_worked, 26.0), 2)
-            hourly_rate = base / 26.0 / 8.0
-            
             # Match Overtime hours by staff name
             ot_info = ot_data.get(name.upper(), {'ot_1.5': 0.0, 'ot_2.0': 0.0, 'ot_3.0': 0.0})
-            ot_pay = round((ot_info['ot_1.5'] * hourly_rate * 1.5) + 
-                           (ot_info['ot_2.0'] * hourly_rate * 2.0) + 
-                           (ot_info['ot_3.0'] * hourly_rate * 3.0), 2)
-            
-            # Deductions on Earned Basic Salary
-            epf_ee, epf_er = compute_epf(earned_basic)
-            socso_ee, socso_er, socso_24h_ee, eis_ee, eis_er = compute_socso_eis(earned_basic)
-            pcb = compute_pcb(earned_basic)
-            
-            total_deductions = round(epf_ee + socso_ee + socso_24h_ee + eis_ee + pcb, 2)
-            
-            # Gross Basic After Deductions
-            basic_after_deductions = round(earned_basic - total_deductions, 2)
-            
-            # Net Pay = Gross Salary After Deductions + OT Pay
-            net_pay = round(basic_after_deductions + ot_pay, 2)
             
             records.append({
                 'Staff Name': name,
@@ -139,50 +98,70 @@ if uploaded_file is not None:
                 'Position': position if position.lower() != 'nan' else 'Staff',
                 'Days Worked': days_worked,
                 'Base Salary (RM)': base,
-                'Earned Basic (RM)': earned_basic,
-                'EPF Employee (RM)': epf_ee,
-                'SOCSO Employee (RM)': socso_ee,
-                'SOCSO 24 Jam perlindungan (RM)': socso_24h_ee,
-                'EIS Employee (RM)': eis_ee,
-                'PCB Tax (RM)': pcb,
-                'Total Deductions (RM)': total_deductions,
-                'Basic Salary After Deductions (RM)': basic_after_deductions,
                 'OT Hours (1.5x)': ot_info['ot_1.5'],
                 'OT Hours (2.0x)': ot_info['ot_2.0'],
-                'OT Hours (3.0x)': ot_info['ot_3.0'],
-                'Total OT Pay (RM)': ot_pay,
-                'Net Salary Payable (RM)': net_pay,
-                'EPF Employer (RM)': epf_er,
-                'SOCSO Employer (RM)': socso_er,
-                'EIS Employer (RM)': eis_er
+                'OT Hours (3.0x)': ot_info['ot_3.0']
             })
             
-        payroll_df = pd.DataFrame(records)
+        base_df = pd.DataFrame(records)
         
-        if len(payroll_df) == 0:
+        if len(base_df) == 0:
             st.warning("No staff rows extracted. Please verify sheet selection.")
         else:
-            st.success(f"Success! Accurately extracted **{len(payroll_df)}** staff records with SOCSO 24 Jam & OT Pay included from `{selected_sheet}`.")
+            st.success(f"Success! Extracted **{len(base_df)}** staff records with live Excel formulas enabled from `{selected_sheet}`.")
             
-            st.subheader("📊 Summary Payroll Breakdown")
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Total Staff Count", f"{len(payroll_df)}")
-            col2.metric("Total Basic Earned", f"RM {payroll_df['Earned Basic (RM)'].sum():,.2f}")
-            col3.metric("Total OT Payout", f"RM {payroll_df['Total OT Pay (RM)'].sum():,.2f}")
-            col4.metric("Total Net Payable", f"RM {payroll_df['Net Salary Payable (RM)'].sum():,.2f}")
+            # Build workbook with live Excel formulas for easy editing
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Payroll Summary"
             
-            st.subheader("📋 Calculated Payroll Data")
-            st.dataframe(payroll_df, use_container_width=True)
+            headers = [
+                'Staff Name', 'IC / ID', 'Position', 'Days Worked', 'Base Salary (RM)', 
+                'Earned Basic (RM)', 'EPF Employee (RM)', 'SOCSO Employee (RM)', 
+                'SOCSO 24 Jam perlindungan (RM)', 'EIS Employee (RM)', 'PCB Tax (RM)', 
+                'Total Deductions (RM)', 'Basic Salary After Deductions (RM)', 
+                'OT Hours (1.5x)', 'OT Hours (2.0x)', 'OT Hours (3.0x)', 'Total OT Pay (RM)', 'Net Salary Payable (RM)'
+            ]
+            ws.append(headers)
             
+            for i, r in base_df.iterrows():
+                row_num = i + 2  # Excel row index starts at 2
+                # Column letters:
+                # D = Days Worked, E = Base Salary, F = Earned Basic
+                # G = EPF, H = SOCSO, I = SOCSO 24H, J = EIS, K = PCB
+                # L = Total Deductions, M = Basic After Deductions
+                # N = OT 1.5x, O = OT 2.0x, P = OT 3.0x, Q = Total OT Pay, R = Net Salary
+                
+                row_formulas = [
+                    r['Staff Name'],
+                    r['IC / ID'],
+                    r['Position'],
+                    r['Days Worked'],
+                    r['Base Salary (RM)'],
+                    f'=IF(D{row_num}>26, (E{row_num}/26)*26, (E{row_num}/26)*D{row_num})',  # Earned Basic
+                    f'=F{row_num}*0.11',  # EPF
+                    f'=MIN(F{row_num}, 5000)*0.005',  # SOCSO
+                    f'=F{row_num}*0.0075',  # SOCSO 24H
+                    f'=MIN(F{row_num}, 5000)*0.002',  # EIS
+                    f'=IF(F{row_num}>3100, (F{row_num}-3100)*0.03, 0)',  # PCB
+                    f'=SUM(G{row_num}:K{row_num})',  # Total Deductions
+                    f'=F{row_num}-L{row_num}',  # Basic After Deductions
+                    r['OT Hours (1.5x)'],
+                    r['OT Hours (2.0x)'],
+                    r['OT Hours (3.0x)'],
+                    f'=(N{row_num}*(E{row_num}/26/8)*1.5) + (O{row_num}*(E{row_num}/26/8)*2.0) + (P{row_num}*(E{row_num}/26/8)*3.0)',  # Total OT Pay
+                    f'=M{row_num}+Q{row_num}'  # Net Salary Payable
+                ]
+                ws.append(row_formulas)
+                
             output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                payroll_df.to_excel(writer, index=False, sheet_name='Payroll Summary')
+            wb.save(output)
             processed_data = output.getvalue()
             
             st.download_button(
-                label="📥 Download Department Payroll Excel Report (.xlsx)",
+                label="📥 Download Auto-Calculating Editable Payroll Report (.xlsx)",
                 data=processed_data,
-                file_name=f"Payroll_Summary_{selected_sheet}.xlsx",
+                file_name=f"Editable_Payroll_{selected_sheet}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         
